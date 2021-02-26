@@ -1,9 +1,9 @@
 var tape = require('tape')
 var h = require('hyperscript')
 
-var html = require('./html')
-var raw = require('./html/raw')
-var choo = require('./')
+var html = require('../html')
+var raw = require('../html/raw')
+var choo = require('..')
 
 tape('should render on the server with nanohtml', function (t) {
   var app = choo()
@@ -76,9 +76,9 @@ tape('router should support a default route', function (t) {
   t.end()
 })
 
-tape('router should treat hashes as slashes by default', function (t) {
+tape('enabling hash routing should treat hashes as slashes', function (t) {
   t.plan(1)
-  var app = choo()
+  var app = choo({ hash: true })
   app.route('/account/security', function (state, emit) {
     t.pass()
     return html`<div></div>`
@@ -87,9 +87,9 @@ tape('router should treat hashes as slashes by default', function (t) {
   t.end()
 })
 
-tape('router should ignore hashes if hash is disabled', function (t) {
+tape('router should ignore hashes by default', function (t) {
   t.plan(1)
-  var app = choo({ hash: false })
+  var app = choo()
   app.route('/account', function (state, emit) {
     t.pass()
     return html`<div></div>`
@@ -168,46 +168,42 @@ tape('state should include events', function (t) {
   t.end()
 })
 
-tape('state should include params', function (t) {
-  t.plan(4)
+tape('state should include location on render', function (t) {
+  t.plan(6)
   var app = choo()
-  app.route('/:resource/:id/*', function (state, emit) {
-    t.ok(state.hasOwnProperty('params'), 'state has params property')
-    t.equal(state.params.resource, 'users', 'resources param is users')
-    t.equal(state.params.id, '1', 'id param is 1')
-    t.equal(state.params.wildcard, 'docs/foo.txt', 'wildcard captures what remains')
+  app.route('/:first/:second/*', function (state, emit) {
+    var params = { first: 'foo', second: 'bar', wildcard: 'file.txt' }
+    t.equal(state.href, '/foo/bar/file.txt', 'state has href')
+    t.equal(state.route, ':first/:second/*', 'state has route')
+    t.ok(state.hasOwnProperty('params'), 'state has params')
+    t.deepEqual(state.params, params, 'params match')
+    t.ok(state.hasOwnProperty('query'), 'state has query')
+    t.deepEqual(state.query, { bin: 'baz' }, 'query match')
     return html`<div></div>`
   })
-  app.toString('/users/1/docs/foo.txt')
+  app.toString('/foo/bar/file.txt?bin=baz')
   t.end()
 })
 
-tape('state should include query', function (t) {
-  t.plan(2)
+tape('state should include location on store init', function (t) {
+  t.plan(6)
   var app = choo()
-  app.route('/', function (state, emit) {
-    t.ok(state.hasOwnProperty('query'), 'state has query property')
-    t.equal(state.query.page, '2', 'page querystring is 2')
+  app.use(store)
+  app.route('/:first/:second/*', function (state, emit) {
     return html`<div></div>`
   })
-  app.toString('/?page=2')
-  t.end()
-})
+  app.toString('/foo/bar/file.txt?bin=baz')
 
-tape('state should include href', function (t) {
-  t.plan(2)
-  var app = choo()
-  app.route('/:resource/:id', function (state, emit) {
-    t.ok(state.hasOwnProperty('href'), 'state has href property')
-    t.equal(state.href, '/users/1', 'href is users/1')
-    return html`<div></div>`
-  })
-  app.toString('/users/1?page=2') // should ignore query
-  t.end()
+  function store (state, emit) {
+    var params = { first: 'foo', second: 'bar', wildcard: 'file.txt' }
+    t.equal(state.href, '/foo/bar/file.txt', 'state has href')
+    t.equal(state.route, ':first/:second/*', 'state has route')
+    t.ok(state.hasOwnProperty('params'), 'state has params')
+    t.deepEqual(state.params, params, 'params match')
+    t.ok(state.hasOwnProperty('query'), 'state has query')
+    t.deepEqual(state.query, { bin: 'baz' }, 'query match')
+  }
 })
-
-// TODO: Implement this using jsdom, as this only works when window is present
-tape.skip('state should include title', function (t) {})
 
 tape('state should include cache', function (t) {
   t.plan(6)
@@ -226,5 +222,39 @@ tape('state should include cache', function (t) {
     t.equal(typeof state, 'object', 'state was prefixed to constructor args')
     t.equal(typeof emit, 'function', 'emit was prefixed to constructor args')
     t.equal(arg, 'arg', 'constructor args were forwarded')
+  }
+})
+
+tape('state should not mutate on toString', function (t) {
+  t.plan(6)
+
+  var app = choo()
+  app.use(store)
+
+  var routes = ['foo', 'bar']
+  var states = routes.map(function (route) {
+    var state = {}
+    app.route(`/${route}`, view)
+    app.toString(`/${route}`, state)
+    return state
+  })
+
+  for (var i = 0, len = routes.length; i < len; i++) {
+    t.equal(states[i].test, routes[i], 'store was used')
+    t.equal(states[i].title, routes[i], 'title was added to state')
+  }
+
+  function store (state, emitter) {
+    state.test = null
+    emitter.on('test', function (str) {
+      t.equal(state.test, null, 'state has been reset')
+      state.test = str
+    })
+  }
+
+  function view (state, emit) {
+    emit('test', state.route)
+    emit(state.events.DOMTITLECHANGE, state.route)
+    return html`<body>Hello ${state.route}</body>`
   }
 })
